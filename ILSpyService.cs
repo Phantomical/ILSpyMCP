@@ -214,6 +214,79 @@ public sealed class ILSpyService
         return Task.FromResult(writer.ToString());
     }
 
+    public Task<string> DecompileMethodAsync(
+        string assemblyPath,
+        string typeName,
+        string methodName,
+        CancellationToken ct = default
+    )
+    {
+        var decompiler = CreateDecompiler(assemblyPath);
+        var fullTypeName = new FullTypeName(typeName);
+        var typeHandle = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
+        if (typeHandle == null)
+            throw new InvalidOperationException($"Type '{typeName}' not found in assembly.");
+
+        var matches = typeHandle.Methods.Where(m => m.Name == methodName).ToList();
+        if (matches.Count == 0)
+            throw new InvalidOperationException(
+                $"Method '{methodName}' not found in type '{typeName}'."
+            );
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < matches.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+            }
+            var handle = (MethodDefinitionHandle)matches[i].MetadataToken;
+            sb.Append(decompiler.DecompileAsString(handle).TrimEnd());
+        }
+
+        return Task.FromResult(sb.ToString());
+    }
+
+    public Task<string> DisassembleMethodAsync(
+        string assemblyPath,
+        string typeName,
+        string methodName,
+        CancellationToken ct = default
+    )
+    {
+        using var module = new PEFile(assemblyPath);
+        var typeHandle = FindTypeHandle(module, typeName);
+        var metadata = module.Metadata;
+        var typeDef = metadata.GetTypeDefinition(typeHandle);
+
+        var matches = new List<MethodDefinitionHandle>();
+        foreach (var methodHandle in typeDef.GetMethods())
+        {
+            var method = metadata.GetMethodDefinition(methodHandle);
+            if (metadata.GetString(method.Name) == methodName)
+                matches.Add(methodHandle);
+        }
+
+        if (matches.Count == 0)
+            throw new InvalidOperationException(
+                $"Method '{methodName}' not found in type '{typeName}'."
+            );
+
+        var writer = new StringWriter();
+        var output = new PlainTextOutput(writer);
+        var disassembler = new ReflectionDisassembler(output, ct);
+
+        for (var i = 0; i < matches.Count; i++)
+        {
+            if (i > 0)
+                writer.WriteLine();
+            disassembler.DisassembleMethod(module, matches[i]);
+        }
+
+        return Task.FromResult(writer.ToString());
+    }
+
     public async Task<string> ListMembersAsync(
         string assemblyPath,
         string typeName,
