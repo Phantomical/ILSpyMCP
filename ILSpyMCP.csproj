@@ -11,7 +11,7 @@
     <PackageId>ILSpyMCP</PackageId>
     <Version>0.1.0</Version>
     <Description>MCP server that wraps ilspycmd to provide .NET assembly inspection tools for LLMs</Description>
-    <Authors>sean-lynch</Authors>
+    <Authors>Sean Lynch</Authors>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>mcp;ilspy;decompiler;dotnet;tools</PackageTags>
