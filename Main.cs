@@ -18,10 +18,12 @@ var referencePathOption = new Option<string[]>(
 var verboseOption = new Option<bool>("--verbose", "Enable debug-level logging to stderr");
 verboseOption.Aliases.Add("-v");
 
-var rootCommand = new RootCommand("ILSpy MCP Server - inspect .NET assemblies via MCP tools");
-rootCommand.Add(ilspyCmdPathOption);
-rootCommand.Add(referencePathOption);
-rootCommand.Add(verboseOption);
+var rootCommand = new RootCommand("ILSpy MCP Server - inspect .NET assemblies via MCP tools")
+{
+    ilspyCmdPathOption,
+    referencePathOption,
+    verboseOption,
+};
 
 rootCommand.SetAction(
     async (parseResult, ct) =>
