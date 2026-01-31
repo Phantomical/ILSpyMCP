@@ -5,12 +5,26 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>ilspy-mcp</ToolCommandName>
+    <PackageId>ILSpyMCP</PackageId>
+    <Version>0.1.0</Version>
+    <Description>MCP server that wraps ilspycmd to provide .NET assembly inspection tools for LLMs</Description>
+    <Authors>sean-lynch</Authors>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>mcp;ilspy;decompiler;dotnet;tools</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" Version="*-*" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
-    <PackageReference Include="System.CommandLine" Version="*-*" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" Version="0.7.0-preview.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.2" />
+    <PackageReference Include="System.CommandLine" Version="2.0.2" />
   </ItemGroup>
 
 </Project>
