@@ -5,18 +5,20 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-var ilspyCmdPathOption = new Option<string?>(
-    "--ilspycmd-path",
-    "Path to ilspycmd executable (default: auto-detect from PATH)"
-);
+var ilspyCmdPathOption = new Option<string?>("--ilspycmd-path")
+{
+    Description = "Path to ilspycmd executable (default: auto-detect from PATH)",
+};
 
-var referencePathOption = new Option<string[]>(
-    "--reference-path",
-    "Add default assembly reference directory (repeatable)"
-);
+var referencePathOption = new Option<string[]>("--reference-path")
+{
+    Description = "Add default assembly reference directory (repeatable)",
+};
 
-var verboseOption = new Option<bool>("--verbose", "Enable debug-level logging to stderr");
-verboseOption.Aliases.Add("-v");
+var verboseOption = new Option<bool>("--verbose", "-v")
+{
+    Description = "Enable debug-level logging to stderr",
+};
 
 var rootCommand = new RootCommand("ILSpy MCP Server - inspect .NET assemblies via MCP tools")
 {
