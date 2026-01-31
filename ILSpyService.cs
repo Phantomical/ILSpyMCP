@@ -1,12 +1,17 @@
-using System.Diagnostics;
+using System.Reflection.Metadata;
+using System.Reflection.Metadata.Ecma335;
 using System.Text;
 using System.Text.RegularExpressions;
+using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.Disassembler;
+using ICSharpCode.Decompiler.Metadata;
+using ICSharpCode.Decompiler.TypeSystem;
 
 namespace ILSpyMCP;
 
 public sealed class ILSpyServiceOptions
 {
-    public string? IlspyCmdPath { get; set; }
     public List<string> ReferencePaths { get; set; } = [];
 }
 
@@ -20,98 +25,154 @@ public sealed class TypeInfo
 
 public sealed class ILSpyService
 {
-    private readonly string _ilspyCmdPath;
     private readonly List<string> _referencePaths;
 
     public ILSpyService(ILSpyServiceOptions options)
     {
-        _ilspyCmdPath =
-            options.IlspyCmdPath
-            ?? FindIlspyCmd()
-            ?? throw new InvalidOperationException(
-                "ilspycmd not found. Install with: dotnet tool install --global ilspycmd"
-            );
         _referencePaths = options.ReferencePaths;
     }
 
-    private static string? FindIlspyCmd()
+    private CSharpDecompiler CreateDecompiler(string assemblyPath)
     {
-        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
-        var extensions = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", "" } : new[] { "" };
+        var module = new PEFile(assemblyPath);
+        var resolver = new UniversalAssemblyResolver(
+            assemblyPath,
+            throwOnError: false,
+            module.DetectTargetFrameworkId()
+        );
+        foreach (var refPath in _referencePaths)
+            resolver.AddSearchDirectory(refPath);
+        return new CSharpDecompiler(module, resolver, new DecompilerSettings());
+    }
 
-        foreach (var dir in pathVar.Split(Path.PathSeparator))
+    private static TypeDefinitionHandle FindTypeHandle(PEFile module, string typeName)
+    {
+        // Handle nested types: Namespace.Outer+Inner
+        var plusIndex = typeName.IndexOf('+');
+        var topLevelName =
+            plusIndex >= 0 ? typeName[..plusIndex] : typeName;
+
+        var handle = module.GetTypeDefinition(new TopLevelTypeName(topLevelName));
+        if (handle.IsNil)
+            throw new InvalidOperationException($"Type '{typeName}' not found in assembly.");
+
+        if (plusIndex < 0)
+            return handle;
+
+        // Walk nested types
+        var nestedPath = typeName[(plusIndex + 1)..].Split('+');
+        var metadata = module.Metadata;
+        foreach (var nestedName in nestedPath)
         {
-            foreach (var ext in extensions)
+            var typeDef = metadata.GetTypeDefinition(handle);
+            var found = false;
+            foreach (var nestedHandle in typeDef.GetNestedTypes())
             {
-                var candidate = Path.Combine(dir, "ilspycmd" + ext);
-                if (File.Exists(candidate))
-                    return candidate;
+                var nested = metadata.GetTypeDefinition(nestedHandle);
+                if (metadata.GetString(nested.Name) == nestedName)
+                {
+                    handle = nestedHandle;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                throw new InvalidOperationException(
+                    $"Nested type '{nestedName}' not found in '{typeName}'."
+                );
+        }
+        return handle;
+    }
+
+    private static string GetTypeKind(MetadataReader metadata, TypeDefinition typeDef)
+    {
+        var attributes = typeDef.Attributes;
+        var isInterface =
+            (attributes & System.Reflection.TypeAttributes.Interface) != 0;
+        if (isInterface)
+            return "Interface";
+
+        var baseTypeHandle = typeDef.BaseType;
+        if (!baseTypeHandle.IsNil)
+        {
+            var baseTypeName = baseTypeHandle.Kind switch
+            {
+                HandleKind.TypeReference => metadata
+                    .GetTypeReference((TypeReferenceHandle)baseTypeHandle)
+                    .Name,
+                HandleKind.TypeDefinition => metadata
+                    .GetTypeDefinition((TypeDefinitionHandle)baseTypeHandle)
+                    .Name,
+                _ => default,
+            };
+            if (!baseTypeName.IsNil)
+            {
+                var name = metadata.GetString(baseTypeName);
+                if (name == "Enum")
+                    return "Enum";
+                if (name == "ValueType")
+                    return "Struct";
+                if (name == "MulticastDelegate" || name == "Delegate")
+                    return "Delegate";
             }
         }
-        return null;
+        return "Class";
     }
 
-    private async Task<(int ExitCode, string StdOut, string StdErr)> RunAsync(
-        List<string> args,
-        CancellationToken ct = default
-    )
-    {
-        // Always add reference paths and disable update check
-        foreach (var refPath in _referencePaths)
-        {
-            args.Add("-r");
-            args.Add(refPath);
-        }
-        args.Add("--disable-updatecheck");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = _ilspyCmdPath,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        using var proc =
-            Process.Start(psi) ?? throw new InvalidOperationException("Failed to start ilspycmd");
-
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = proc.StandardError.ReadToEndAsync(ct);
-
-        await proc.WaitForExitAsync(ct);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-
-        return (proc.ExitCode, stdout, stderr);
-    }
-
-    public async Task<List<TypeInfo>> ListTypesAsync(
+    public Task<List<TypeInfo>> ListTypesAsync(
         string assemblyPath,
         string? pattern = null,
         CancellationToken ct = default
     )
     {
-        var args = new List<string> { assemblyPath, "-l", "cisde" };
-        var (exitCode, stdout, stderr) = await RunAsync(args, ct);
-
-        if (exitCode != 0)
-            throw new InvalidOperationException($"ilspycmd failed: {stderr}");
-
-        var regex = new Regex(@"^(\w+)\s+(.+)$", RegexOptions.Multiline);
+        using var module = new PEFile(assemblyPath);
+        var metadata = module.Metadata;
         Regex? filterRegex = pattern != null ? new Regex(pattern, RegexOptions.IgnoreCase) : null;
 
         var types = new List<TypeInfo>();
-        foreach (Match m in regex.Matches(stdout))
+
+        foreach (var handle in metadata.TypeDefinitions)
         {
-            var kind = m.Groups[1].Value;
-            var fullName = m.Groups[2].Value.Trim();
+            ct.ThrowIfCancellationRequested();
+            var typeDef = metadata.GetTypeDefinition(handle);
+
+            // Skip the <Module> type
+            var name = metadata.GetString(typeDef.Name);
+            if (name == "<Module>")
+                continue;
+
+            var ns = metadata.GetString(typeDef.Namespace);
+            var isNested = typeDef.IsNested;
+
+            // Build full name
+            string fullName;
+            if (isNested)
+            {
+                // Build nested type name with + separator
+                var parts = new List<string> { name };
+                var current = typeDef;
+                while (current.IsNested)
+                {
+                    var declaringHandle = current.GetDeclaringType();
+                    current = metadata.GetTypeDefinition(declaringHandle);
+                    parts.Add(metadata.GetString(current.Name));
+                }
+                parts.Reverse();
+                var outerNs = metadata.GetString(current.Namespace);
+                var nestedName = string.Join("+", parts);
+                fullName = string.IsNullOrEmpty(outerNs) ? nestedName : $"{outerNs}.{nestedName}";
+            }
+            else
+            {
+                fullName = string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
+            }
 
             if (filterRegex != null && !filterRegex.IsMatch(fullName))
                 continue;
 
+            var kind = GetTypeKind(metadata, typeDef);
+
+            // For display, namespace is the part before the last dot
             var lastDot = fullName.LastIndexOf('.');
             types.Add(
                 new TypeInfo
@@ -123,37 +184,34 @@ public sealed class ILSpyService
                 }
             );
         }
-        return types;
+
+        return Task.FromResult(types);
     }
 
-    public async Task<string> DecompileAsync(
+    public Task<string> DecompileAsync(
         string assemblyPath,
         string typeName,
         CancellationToken ct = default
     )
     {
-        var args = new List<string> { assemblyPath, "-t", typeName };
-        var (exitCode, stdout, stderr) = await RunAsync(args, ct);
-
-        if (exitCode != 0)
-            throw new InvalidOperationException($"ilspycmd failed: {stderr}");
-
-        return stdout;
+        var decompiler = CreateDecompiler(assemblyPath);
+        var result = decompiler.DecompileTypeAsString(new FullTypeName(typeName));
+        return Task.FromResult(result);
     }
 
-    public async Task<string> DisassembleAsync(
+    public Task<string> DisassembleAsync(
         string assemblyPath,
         string typeName,
         CancellationToken ct = default
     )
     {
-        var args = new List<string> { assemblyPath, "-t", typeName, "-il" };
-        var (exitCode, stdout, stderr) = await RunAsync(args, ct);
-
-        if (exitCode != 0)
-            throw new InvalidOperationException($"ilspycmd failed: {stderr}");
-
-        return stdout;
+        using var module = new PEFile(assemblyPath);
+        var handle = FindTypeHandle(module, typeName);
+        var writer = new StringWriter();
+        var output = new PlainTextOutput(writer);
+        var disassembler = new ReflectionDisassembler(output, ct);
+        disassembler.DisassembleType(module, handle);
+        return Task.FromResult(writer.ToString());
     }
 
     public async Task<string> ListMembersAsync(
@@ -162,13 +220,21 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        // Decompile the type to C# to get member signatures
         var decompiled = await DecompileAsync(assemblyPath, typeName, ct);
 
-        // Also find nested types
-        var allTypes = await ListTypesAsync(assemblyPath, null, ct);
-        var nestedPrefix = typeName + "+";
-        var nestedTypes = allTypes.Where(t => t.FullName.StartsWith(nestedPrefix)).ToList();
+        // Find nested types using metadata
+        using var module = new PEFile(assemblyPath);
+        var handle = FindTypeHandle(module, typeName);
+        var metadata = module.Metadata;
+        var typeDef = metadata.GetTypeDefinition(handle);
+        var nestedTypes = new List<(string Kind, string Name)>();
+        foreach (var nestedHandle in typeDef.GetNestedTypes())
+        {
+            var nested = metadata.GetTypeDefinition(nestedHandle);
+            var nestedName = metadata.GetString(nested.Name);
+            var kind = GetTypeKind(metadata, nested);
+            nestedTypes.Add((kind, $"{typeName}+{nestedName}"));
+        }
 
         var sb = new StringBuilder();
         sb.AppendLine($"## Members of `{typeName}`");
@@ -182,8 +248,8 @@ public sealed class ILSpyService
         {
             sb.AppendLine();
             sb.AppendLine("### Nested Types");
-            foreach (var nt in nestedTypes)
-                sb.AppendLine($"- {nt.Kind}: `{nt.FullName}`");
+            foreach (var (kind, name) in nestedTypes)
+                sb.AppendLine($"- {kind}: `{name}`");
         }
 
         return sb.ToString();

@@ -1,14 +1,10 @@
 # ILSpy MCP Server
 
-An [MCP](https://modelcontextprotocol.io/) server that wraps [`ilspycmd`](https://github.com/icsharpcode/ILSpy/tree/master/ICSharpCode.ILSpyCmd) to provide .NET assembly inspection tools. Lets LLMs list types, decompile C#, and view IL disassembly from compiled assemblies.
+An [MCP](https://modelcontextprotocol.io/) server that uses [ICSharpCode.Decompiler](https://github.com/icsharpcode/ILSpy) to provide .NET assembly inspection tools. Lets LLMs list types, decompile C#, and view IL disassembly from compiled assemblies.
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/)
-- `ilspycmd` installed as a global tool:
-  ```
-  dotnet tool install --global ilspycmd
-  ```
 
 ## Build
 
@@ -28,7 +24,6 @@ dotnet run [options]
 
 | Option | Description |
 |---|---|
-| `--ilspycmd-path <path>` | Path to `ilspycmd` executable (default: auto-detect from PATH) |
 | `--reference-path <path>` | Add assembly reference directory (repeatable) |
 | `-v`, `--verbose` | Enable debug-level logging to stderr |
 
