@@ -5,6 +5,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.OutputVisitor;
+using ICSharpCode.Decompiler.CSharp.Syntax;
 using ICSharpCode.Decompiler.Disassembler;
 using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
@@ -196,6 +198,46 @@ public sealed class ILSpyService
         var decompiler = CreateDecompiler(assemblyPath);
         var result = decompiler.DecompileTypeAsString(new FullTypeName(typeName));
         return Task.FromResult(result);
+    }
+
+    public Task<string> DecompileTypeSignaturesAsync(
+        string assemblyPath,
+        string typeName,
+        CancellationToken ct = default
+    )
+    {
+        var decompiler = CreateDecompiler(assemblyPath);
+        var syntaxTree = decompiler.DecompileType(new FullTypeName(typeName));
+
+        // Strip method/accessor bodies to show only signatures
+        foreach (var node in syntaxTree.Descendants.ToList())
+        {
+            switch (node)
+            {
+                case MethodDeclaration m when !m.Body.IsNull:
+                    m.Body.Remove();
+                    break;
+                case ConstructorDeclaration c when !c.Body.IsNull:
+                    c.Body.Remove();
+                    break;
+                case DestructorDeclaration d when !d.Body.IsNull:
+                    d.Body.Remove();
+                    break;
+                case OperatorDeclaration o when !o.Body.IsNull:
+                    o.Body.Remove();
+                    break;
+                case Accessor a when !a.Body.IsNull:
+                    a.Body.Remove();
+                    break;
+            }
+        }
+
+        using var writer = new StringWriter();
+        var settings = new DecompilerSettings();
+        syntaxTree.AcceptVisitor(
+            new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions)
+        );
+        return Task.FromResult(writer.ToString());
     }
 
     public Task<string> DisassembleAsync(
