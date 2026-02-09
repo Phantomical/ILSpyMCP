@@ -327,48 +327,6 @@ public sealed class ILSpyService
 
         return Task.FromResult(writer.ToString());
     }
-
-    public async Task<string> ListMembersAsync(
-        string assemblyPath,
-        string typeName,
-        CancellationToken ct = default
-    )
-    {
-        var decompiled = await DecompileAsync(assemblyPath, typeName, ct);
-
-        // Find nested types using metadata
-        using var module = new PEFile(assemblyPath);
-        var handle = FindTypeHandle(module, typeName);
-        var metadata = module.Metadata;
-        var typeDef = metadata.GetTypeDefinition(handle);
-        var nestedTypes = new List<(string Kind, string Name)>();
-        foreach (var nestedHandle in typeDef.GetNestedTypes())
-        {
-            var nested = metadata.GetTypeDefinition(nestedHandle);
-            var nestedName = metadata.GetString(nested.Name);
-            var kind = GetTypeKind(metadata, nested);
-            nestedTypes.Add((kind, $"{typeName}+{nestedName}"));
-        }
-
-        var sb = new StringBuilder();
-        sb.AppendLine($"## Members of `{typeName}`");
-        sb.AppendLine();
-        sb.AppendLine("### Decompiled Source");
-        sb.AppendLine("```csharp");
-        sb.AppendLine(decompiled.TrimEnd());
-        sb.AppendLine("```");
-
-        if (nestedTypes.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("### Nested Types");
-            foreach (var (kind, name) in nestedTypes)
-                sb.AppendLine($"- {kind}: `{name}`");
-        }
-
-        return sb.ToString();
-    }
-
     private record struct Usage(string TypeFullName, string MemberName, string UsageKind);
 
     public async Task<string> FindUsagesAsync(
