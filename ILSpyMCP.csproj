@@ -9,7 +9,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>ilspy-mcp</ToolCommandName>
     <PackageId>ILSpyMCP</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Description>MCP server using ICSharpCode.Decompiler to provide .NET assembly inspection tools for LLMs</Description>
     <Authors>Sean Lynch</Authors>
     <PackageReadmeFile>README.md</PackageReadmeFile>
