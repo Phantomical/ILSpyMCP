@@ -327,6 +327,21 @@ public sealed class ILSpyService
 
         return Task.FromResult(writer.ToString());
     }
+    public Task<string> GetAssemblyAttributesAsync(
+        string assemblyPath,
+        CancellationToken ct = default
+    )
+    {
+        var decompiler = CreateDecompiler(assemblyPath);
+        var syntaxTree = decompiler.DecompileModuleAndAssemblyAttributes();
+        using var writer = new StringWriter();
+        var settings = new DecompilerSettings();
+        syntaxTree.AcceptVisitor(
+            new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions)
+        );
+        return Task.FromResult(writer.ToString());
+    }
+
     private record struct Usage(string TypeFullName, string MemberName, string UsageKind);
 
     public async Task<string> FindUsagesAsync(
