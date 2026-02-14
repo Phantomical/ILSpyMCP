@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.RegularExpressions;
 using ICSharpCode.Decompiler;
@@ -35,11 +36,16 @@ public sealed class ILSpyService
         _referencePaths = options.ReferencePaths;
     }
 
-    private CSharpDecompiler CreateDecompiler(string assemblyPath)
-    {
-        var module = new PEFile(assemblyPath);
-        var resolver = new UniversalAssemblyResolver(
+    private PEFile LoadModule(string assemblyPath) =>
+        new PEFile(
             assemblyPath,
+            PEStreamOptions.PrefetchEntireImage | PEStreamOptions.PrefetchMetadata
+        );
+
+    private CSharpDecompiler CreateDecompiler(PEFile module)
+    {
+        var resolver = new UniversalAssemblyResolver(
+            module.FileName,
             throwOnError: false,
             module.DetectTargetFrameworkId()
         );
@@ -126,7 +132,7 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = new PEFile(assemblyPath);
+        using var module = LoadModule(assemblyPath);
         var metadata = module.Metadata;
         Regex? filterRegex = pattern != null ? new Regex(pattern, RegexOptions.IgnoreCase) : null;
 
@@ -195,7 +201,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        var decompiler = CreateDecompiler(assemblyPath);
+        using var module = LoadModule(assemblyPath);
+        var decompiler = CreateDecompiler(module);
         var result = decompiler.DecompileTypeAsString(new FullTypeName(typeName));
         return Task.FromResult(result);
     }
@@ -206,7 +213,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        var decompiler = CreateDecompiler(assemblyPath);
+        using var module = LoadModule(assemblyPath);
+        var decompiler = CreateDecompiler(module);
         var syntaxTree = decompiler.DecompileType(new FullTypeName(typeName));
 
         // Strip method/accessor bodies to show only signatures
@@ -234,9 +242,7 @@ public sealed class ILSpyService
 
         using var writer = new StringWriter();
         var settings = new DecompilerSettings();
-        syntaxTree.AcceptVisitor(
-            new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions)
-        );
+        syntaxTree.AcceptVisitor(new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions));
         return Task.FromResult(writer.ToString());
     }
 
@@ -246,7 +252,7 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = new PEFile(assemblyPath);
+        using var module = LoadModule(assemblyPath);
         var handle = FindTypeHandle(module, typeName);
         var writer = new StringWriter();
         var output = new PlainTextOutput(writer);
@@ -262,7 +268,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        var decompiler = CreateDecompiler(assemblyPath);
+        using var module = LoadModule(assemblyPath);
+        var decompiler = CreateDecompiler(module);
         var fullTypeName = new FullTypeName(typeName);
         var typeHandle = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
         if (typeHandle == null)
@@ -296,7 +303,7 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = new PEFile(assemblyPath);
+        using var module = LoadModule(assemblyPath);
         var typeHandle = FindTypeHandle(module, typeName);
         var metadata = module.Metadata;
         var typeDef = metadata.GetTypeDefinition(typeHandle);
@@ -327,18 +334,18 @@ public sealed class ILSpyService
 
         return Task.FromResult(writer.ToString());
     }
+
     public Task<string> GetAssemblyAttributesAsync(
         string assemblyPath,
         CancellationToken ct = default
     )
     {
-        var decompiler = CreateDecompiler(assemblyPath);
+        using var module = LoadModule(assemblyPath);
+        var decompiler = CreateDecompiler(module);
         var syntaxTree = decompiler.DecompileModuleAndAssemblyAttributes();
         using var writer = new StringWriter();
         var settings = new DecompilerSettings();
-        syntaxTree.AcceptVisitor(
-            new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions)
-        );
+        syntaxTree.AcceptVisitor(new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions));
         return Task.FromResult(writer.ToString());
     }
 
@@ -351,7 +358,7 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = await Task.Run(() => new PEFile(assemblyPath));
+        using var module = await Task.Run(() => LoadModule(assemblyPath));
         var metadata = module.Metadata;
 
         // Step 1: Resolve target handles
