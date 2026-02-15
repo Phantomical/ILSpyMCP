@@ -13,7 +13,7 @@ public sealed class DisassembleMethodTool
         Title = "Disassemble Method to IL"
     )]
     [Description(
-        "Disassemble a specific method from a .NET assembly to IL (Intermediate Language) code. If multiple overloads exist, all are returned."
+        "Disassemble a specific method from a .NET assembly to IL (Intermediate Language) code. If multiple overloads exist, all are returned. Also accepts property names, returning the IL for the property's getter and/or setter."
     )]
     public static async Task<CallToolResult> DisassembleMethod(
         ILSpyService ilspy,
@@ -33,7 +33,10 @@ public sealed class DisassembleMethodTool
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = $"Error disassembling method: {ex.Message}" }],
+                Content =
+                [
+                    new TextContentBlock { Text = $"Error disassembling method: {ex.Message}" },
+                ],
             };
         }
     }

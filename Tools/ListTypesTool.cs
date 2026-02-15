@@ -24,7 +24,10 @@ public sealed class ListTypesTool
             var types = await ilspy.ListTypesAsync(assemblyPath, pattern, ct);
 
             if (types.Count == 0)
-                return new CallToolResult { Content = [new TextContentBlock { Text = "No types found." }] };
+                return new CallToolResult
+                {
+                    Content = [new TextContentBlock { Text = "No types found." }],
+                };
 
             var sb = new StringBuilder();
             sb.AppendLine($"Found {types.Count} types:");

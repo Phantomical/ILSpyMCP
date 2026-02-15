@@ -7,7 +7,11 @@ namespace ILSpyMCP.Tools;
 [McpServerToolType]
 public sealed class AssemblyAttributesTool
 {
-    [McpServerTool(Name = "get_assembly_attributes", ReadOnly = true, Title = "Get Assembly Attributes")]
+    [McpServerTool(
+        Name = "get_assembly_attributes",
+        ReadOnly = true,
+        Title = "Get Assembly Attributes"
+    )]
     [Description(
         "Decompile assembly-level and module-level attributes from a .NET assembly (e.g. TargetFramework, AssemblyVersion, InternalsVisibleTo)."
     )]
@@ -27,7 +31,13 @@ public sealed class AssemblyAttributesTool
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = $"Error reading assembly attributes: {ex.Message}" }],
+                Content =
+                [
+                    new TextContentBlock
+                    {
+                        Text = $"Error reading assembly attributes: {ex.Message}",
+                    },
+                ],
             };
         }
     }

@@ -7,13 +7,9 @@ namespace ILSpyMCP.Tools;
 [McpServerToolType]
 public sealed class DecompileMethodTool
 {
-    [McpServerTool(
-        Name = "decompile_method",
-        ReadOnly = true,
-        Title = "Decompile Method to C#"
-    )]
+    [McpServerTool(Name = "decompile_method", ReadOnly = true, Title = "Decompile Method to C#")]
     [Description(
-        "Decompile a specific method from a .NET assembly to C# source code. If multiple overloads exist, all are returned."
+        "Decompile a specific method from a .NET assembly to C# source code. If multiple overloads exist, all are returned. Also accepts property names, returning the decompiled getter and/or setter."
     )]
     public static async Task<CallToolResult> DecompileMethod(
         ILSpyService ilspy,
@@ -33,7 +29,10 @@ public sealed class DecompileMethodTool
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = $"Error decompiling method: {ex.Message}" }],
+                Content =
+                [
+                    new TextContentBlock { Text = $"Error decompiling method: {ex.Message}" },
+                ],
             };
         }
     }

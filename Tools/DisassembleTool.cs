@@ -26,7 +26,10 @@ public sealed class DisassembleTool
             return new CallToolResult
             {
                 IsError = true,
-                Content = [new TextContentBlock { Text = $"Error disassembling type: {ex.Message}" }],
+                Content =
+                [
+                    new TextContentBlock { Text = $"Error disassembling type: {ex.Message}" },
+                ],
             };
         }
     }

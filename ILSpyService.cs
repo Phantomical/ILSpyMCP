@@ -276,9 +276,23 @@ public sealed class ILSpyService
             throw new InvalidOperationException($"Type '{typeName}' not found in assembly.");
 
         var matches = typeHandle.Methods.Where(m => m.Name == methodName).ToList();
+
+        // If no direct method match, check if it's a property name and find its accessors
+        if (matches.Count == 0)
+        {
+            var prop = typeHandle.Properties.FirstOrDefault(p => p.Name == methodName);
+            if (prop != null)
+            {
+                if (prop.Getter != null)
+                    matches.Add(prop.Getter);
+                if (prop.Setter != null)
+                    matches.Add(prop.Setter);
+            }
+        }
+
         if (matches.Count == 0)
             throw new InvalidOperationException(
-                $"Method '{methodName}' not found in type '{typeName}'."
+                $"Method or property '{methodName}' not found in type '{typeName}'."
             );
 
         var sb = new StringBuilder();
@@ -316,9 +330,27 @@ public sealed class ILSpyService
                 matches.Add(methodHandle);
         }
 
+        // If no direct method match, check if it's a property name and find its accessors
+        if (matches.Count == 0)
+        {
+            foreach (var propHandle in typeDef.GetProperties())
+            {
+                var prop = metadata.GetPropertyDefinition(propHandle);
+                if (metadata.GetString(prop.Name) == methodName)
+                {
+                    var accessors = prop.GetAccessors();
+                    if (!accessors.Getter.IsNil)
+                        matches.Add(accessors.Getter);
+                    if (!accessors.Setter.IsNil)
+                        matches.Add(accessors.Setter);
+                    break;
+                }
+            }
+        }
+
         if (matches.Count == 0)
             throw new InvalidOperationException(
-                $"Method '{methodName}' not found in type '{typeName}'."
+                $"Method or property '{methodName}' not found in type '{typeName}'."
             );
 
         var writer = new StringWriter();
