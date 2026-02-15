@@ -367,6 +367,84 @@ public sealed class ILSpyService
         return Task.FromResult(writer.ToString());
     }
 
+    public Task<string> SearchMembersAsync(
+        string assemblyPath,
+        string typeName,
+        string pattern,
+        CancellationToken ct = default
+    )
+    {
+        using var module = LoadModule(assemblyPath);
+        var decompiler = CreateDecompiler(module);
+        var fullTypeName = new FullTypeName(typeName);
+        var typeDefinition = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
+        if (typeDefinition == null)
+            throw new InvalidOperationException($"Type '{typeName}' not found in assembly.");
+
+        var regex = new Regex(pattern, RegexOptions.IgnoreCase);
+        var sb = new StringBuilder();
+
+        // Fields
+        foreach (var field in typeDefinition.Fields)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!regex.IsMatch(field.Name))
+                continue;
+            sb.AppendLine($"[Field] {field.ReturnType} {field.Name}");
+        }
+
+        // Properties
+        foreach (var prop in typeDefinition.Properties)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!regex.IsMatch(prop.Name))
+                continue;
+            var accessors = new List<string>();
+            if (prop.CanGet)
+                accessors.Add("get");
+            if (prop.CanSet)
+                accessors.Add("set");
+            sb.AppendLine(
+                $"[Property] {prop.ReturnType} {prop.Name} {{ {string.Join("; ", accessors)}; }}"
+            );
+        }
+
+        // Events
+        foreach (var evt in typeDefinition.Events)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!regex.IsMatch(evt.Name))
+                continue;
+            sb.AppendLine($"[Event] {evt.ReturnType} {evt.Name}");
+        }
+
+        // Methods (excluding compiler-generated accessors)
+        foreach (var method in typeDefinition.Methods)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (method.AccessorOwner != null)
+                continue; // skip property/event accessors
+            if (!regex.IsMatch(method.Name))
+                continue;
+            var parameters = string.Join(", ", method.Parameters.Select(p => $"{p.Type} {p.Name}"));
+            sb.AppendLine($"[Method] {method.ReturnType} {method.Name}({parameters})");
+        }
+
+        // Nested types
+        foreach (var nested in typeDefinition.NestedTypes)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!regex.IsMatch(nested.Name))
+                continue;
+            sb.AppendLine($"[NestedType] {nested.Kind} {nested.Name}");
+        }
+
+        if (sb.Length == 0)
+            return Task.FromResult($"No members matching '{pattern}' found in type '{typeName}'.");
+
+        return Task.FromResult(sb.ToString());
+    }
+
     public Task<string> GetAssemblyAttributesAsync(
         string assemblyPath,
         CancellationToken ct = default
