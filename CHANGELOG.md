@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- `search_members` tool for regex-filtering members on a type, useful for large types where full decompilation is too verbose
+
+### Changed
+- `decompile_method` and `disassemble_method` now accept property names and return their accessors
+
+### Fixed
+- Assemblies are no longer held open with file locks during inspection
+
 ## 0.2.0
 
 ### Added
