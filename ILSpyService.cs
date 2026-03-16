@@ -459,6 +459,48 @@ public sealed class ILSpyService
         return Task.FromResult(writer.ToString());
     }
 
+    public Task<string> GetAssemblyReferencesAsync(
+        string assemblyPath,
+        CancellationToken ct = default
+    )
+    {
+        using var module = LoadModule(assemblyPath);
+        var metadata = module.Metadata;
+        var sb = new StringBuilder();
+
+        foreach (var handle in metadata.AssemblyReferences)
+        {
+            var asmRef = metadata.GetAssemblyReference(handle);
+            var name = metadata.GetString(asmRef.Name);
+            var version = asmRef.Version;
+            sb.Append(name);
+            sb.Append(", Version=");
+            sb.Append(version);
+
+            var pkt = metadata.GetBlobContent(asmRef.PublicKeyOrToken);
+            if (pkt.Length > 0)
+            {
+                sb.Append(", PublicKeyToken=");
+                foreach (var b in pkt)
+                    sb.Append(b.ToString("x2"));
+            }
+
+            var culture = metadata.GetString(asmRef.Culture);
+            if (!string.IsNullOrEmpty(culture))
+            {
+                sb.Append(", Culture=");
+                sb.Append(culture);
+            }
+
+            sb.AppendLine();
+        }
+
+        if (sb.Length == 0)
+            sb.AppendLine("No assembly references found.");
+
+        return Task.FromResult(sb.ToString());
+    }
+
     private record struct Usage(string TypeFullName, string MemberName, string UsageKind);
 
     public async Task<string> FindUsagesAsync(
