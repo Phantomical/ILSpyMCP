@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Assemblies pulled in by the assembly resolver (references of the inspected file, including
+  neighbours in the same directory) are no longer left open. 0.3.0 only released the lock on
+  the inspected assembly itself, so decompiling one file still locked everything it referenced.
+
 ## 0.3.0
 
 ### Added

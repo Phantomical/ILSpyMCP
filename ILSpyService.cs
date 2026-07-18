@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
@@ -36,23 +37,118 @@ public sealed class ILSpyService
         _referencePaths = options.ReferencePaths;
     }
 
-    private PEFile LoadModule(string assemblyPath) =>
-        new PEFile(
-            assemblyPath,
-            PEStreamOptions.PrefetchEntireImage | PEStreamOptions.PrefetchMetadata
-        );
+    /// <summary>
+    /// Reads the whole image up front so the OS file handle is closed inside the
+    /// PEReader constructor. Every assembly we open must use these options, otherwise
+    /// the file stays locked for as long as the reader lives.
+    /// </summary>
+    private const PEStreamOptions PrefetchOptions =
+        PEStreamOptions.PrefetchEntireImage | PEStreamOptions.PrefetchMetadata;
 
-    private CSharpDecompiler CreateDecompiler(PEFile module)
+    private static PEFile LoadModule(string assemblyPath) =>
+        new PEFile(assemblyPath, PrefetchOptions);
+
+    /// <summary>
+    /// Wraps <see cref="UniversalAssemblyResolver"/> so the assemblies it pulls in are
+    /// opened with <see cref="PrefetchOptions"/> and are disposed when the request ends.
+    /// The resolver hands out a fresh <see cref="MetadataFile"/> per call and never
+    /// disposes them itself, so without this the references stay locked.
+    /// </summary>
+    private sealed class TrackingAssemblyResolver
+        : AssemblyReferenceClassifier,
+            IAssemblyResolver,
+            IDisposable
     {
-        var resolver = new UniversalAssemblyResolver(
-            module.FileName,
-            throwOnError: false,
-            module.DetectTargetFrameworkId()
-        );
-        foreach (var refPath in _referencePaths)
-            resolver.AddSearchDirectory(refPath);
-        return new CSharpDecompiler(module, resolver, new DecompilerSettings());
+        private readonly UniversalAssemblyResolver _inner;
+        private readonly ConcurrentBag<MetadataFile> _resolved = [];
+
+        public TrackingAssemblyResolver(PEFile module, IEnumerable<string> referencePaths)
+        {
+            _inner = new UniversalAssemblyResolver(
+                module.FileName,
+                throwOnError: false,
+                module.DetectTargetFrameworkId(),
+                runtimePack: null,
+                streamOptions: PrefetchOptions
+            );
+            foreach (var refPath in referencePaths)
+                _inner.AddSearchDirectory(refPath);
+        }
+
+        private MetadataFile? Track(MetadataFile? file)
+        {
+            if (file != null)
+                _resolved.Add(file);
+            return file;
+        }
+
+        public MetadataFile? Resolve(IAssemblyReference reference) =>
+            Track(_inner.Resolve(reference));
+
+        public MetadataFile? ResolveModule(MetadataFile mainModule, string moduleName) =>
+            Track(_inner.ResolveModule(mainModule, moduleName));
+
+        public async Task<MetadataFile?> ResolveAsync(IAssemblyReference reference) =>
+            Track(await _inner.ResolveAsync(reference));
+
+        public async Task<MetadataFile?> ResolveModuleAsync(
+            MetadataFile mainModule,
+            string moduleName
+        ) => Track(await _inner.ResolveModuleAsync(mainModule, moduleName));
+
+        public override bool IsGacAssembly(IAssemblyReference reference) =>
+            _inner.IsGacAssembly(reference);
+
+        public override bool IsSharedAssembly(
+            IAssemblyReference reference,
+            [NotNullWhen(true)] out string? runtimePack
+        ) => _inner.IsSharedAssembly(reference, out runtimePack);
+
+        public void Dispose()
+        {
+            foreach (var file in _resolved)
+            {
+                if (file is IDisposable disposable)
+                    disposable.Dispose();
+            }
+        }
     }
+
+    /// <summary>
+    /// A decompiler together with every assembly opened to build it. Disposing releases
+    /// the main module and all resolved references.
+    /// </summary>
+    private sealed class DecompilerScope : IDisposable
+    {
+        private readonly PEFile _module;
+        private readonly TrackingAssemblyResolver _resolver;
+
+        public CSharpDecompiler Decompiler { get; }
+
+        public DecompilerScope(string assemblyPath, IEnumerable<string> referencePaths)
+        {
+            _module = LoadModule(assemblyPath);
+            try
+            {
+                _resolver = new TrackingAssemblyResolver(_module, referencePaths);
+                Decompiler = new CSharpDecompiler(_module, _resolver, new DecompilerSettings());
+            }
+            catch
+            {
+                _module.Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            _resolver.Dispose();
+            _module.Dispose();
+        }
+    }
+
+    private DecompilerScope CreateDecompiler(string assemblyPath) =>
+        new(assemblyPath, _referencePaths);
 
     private static TypeDefinitionHandle FindTypeHandle(PEFile module, string typeName)
     {
@@ -201,9 +297,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = LoadModule(assemblyPath);
-        var decompiler = CreateDecompiler(module);
-        var result = decompiler.DecompileTypeAsString(new FullTypeName(typeName));
+        using var scope = CreateDecompiler(assemblyPath);
+        var result = scope.Decompiler.DecompileTypeAsString(new FullTypeName(typeName));
         return Task.FromResult(result);
     }
 
@@ -213,9 +308,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = LoadModule(assemblyPath);
-        var decompiler = CreateDecompiler(module);
-        var syntaxTree = decompiler.DecompileType(new FullTypeName(typeName));
+        using var scope = CreateDecompiler(assemblyPath);
+        var syntaxTree = scope.Decompiler.DecompileType(new FullTypeName(typeName));
 
         // Strip method/accessor bodies to show only signatures
         foreach (var node in syntaxTree.Descendants.ToList())
@@ -268,8 +362,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = LoadModule(assemblyPath);
-        var decompiler = CreateDecompiler(module);
+        using var scope = CreateDecompiler(assemblyPath);
+        var decompiler = scope.Decompiler;
         var fullTypeName = new FullTypeName(typeName);
         var typeHandle = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
         if (typeHandle == null)
@@ -374,10 +468,9 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = LoadModule(assemblyPath);
-        var decompiler = CreateDecompiler(module);
+        using var scope = CreateDecompiler(assemblyPath);
         var fullTypeName = new FullTypeName(typeName);
-        var typeDefinition = decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
+        var typeDefinition = scope.Decompiler.TypeSystem.FindType(fullTypeName).GetDefinition();
         if (typeDefinition == null)
             throw new InvalidOperationException($"Type '{typeName}' not found in assembly.");
 
@@ -450,9 +543,8 @@ public sealed class ILSpyService
         CancellationToken ct = default
     )
     {
-        using var module = LoadModule(assemblyPath);
-        var decompiler = CreateDecompiler(module);
-        var syntaxTree = decompiler.DecompileModuleAndAssemblyAttributes();
+        using var scope = CreateDecompiler(assemblyPath);
+        var syntaxTree = scope.Decompiler.DecompileModuleAndAssemblyAttributes();
         using var writer = new StringWriter();
         var settings = new DecompilerSettings();
         syntaxTree.AcceptVisitor(new CSharpOutputVisitor(writer, settings.CSharpFormattingOptions));
