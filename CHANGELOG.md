@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 ### Fixed
 - Assemblies pulled in by the assembly resolver (references of the inspected file, including
